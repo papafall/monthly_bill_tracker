@@ -2,18 +2,24 @@ import Foundation
 
 @MainActor
 class BillStore: ObservableObject {
-    @Published private(set) var bills: [Bill] = []
+    @Published var bills: [Bill] = []
+    @Published var isDarkMode: Bool = false
+    @Published var showCombinedSections: Bool = false
     private let saveKey = "SavedBills"
     
     init() {
-        loadBills()
-        // If no bills are loaded, add starter bills
-        if bills.isEmpty {
-            loadStarterBills()
+        if let data = UserDefaults.standard.data(forKey: saveKey),
+           let savedBills = try? JSONDecoder().decode([Bill].self, from: data) {
+            bills = savedBills
         }
     }
     
-    private func loadStarterBills() {
+    func clearAllBills() {
+        bills = []
+        saveBills()
+    }
+    
+    func loadStarterBills() {
         let starterBills = [
             // Early Month Bills (1-14)
             Bill(name: "Mortgage/Rent", amount: 2500.00, dueDay: 1),
@@ -45,9 +51,9 @@ class BillStore: ObservableObject {
         saveBills()
     }
     
-    func updateBill(_ bill: Bill) {
-        if let index = bills.firstIndex(where: { $0.id == bill.id }) {
-            bills[index] = bill
+    func updateBill(_ updatedBill: Bill) {
+        if let index = bills.firstIndex(where: { $0.id == updatedBill.id }) {
+            bills[index] = updatedBill
             sortBills()
             saveBills()
         }
@@ -59,9 +65,9 @@ class BillStore: ObservableObject {
     }
     
     func togglePaidStatus(_ bill: Bill) {
-        if var bill = bills.first(where: { $0.id == bill.id }) {
-            bill.isPaid.toggle()
-            updateBill(bill)
+        if let index = bills.firstIndex(where: { $0.id == bill.id }) {
+            bills[index].isPaid.toggle()
+            saveBills()
         }
     }
     
@@ -79,45 +85,93 @@ class BillStore: ObservableObject {
         }
     }
     
+    func toggleFirstHalfPaidStatus() {
+        // Check if all first half bills are paid
+        let allPaid = earlyMonthBills.allSatisfy { $0.isPaid }
+        
+        // Toggle to opposite state
+        for var bill in bills where bill.dueDay <= 14 {
+            bill.isPaid = !allPaid
+            updateBill(bill)
+        }
+    }
+    
+    func toggleSecondHalfPaidStatus() {
+        // Check if all second half bills are paid
+        let allPaid = lateMonthBills.allSatisfy { $0.isPaid }
+        
+        // Toggle to opposite state
+        for var bill in bills where bill.dueDay > 14 {
+            bill.isPaid = !allPaid
+            updateBill(bill)
+        }
+    }
+    
     private func sortBills() {
         bills.sort { $0.dueDay < $1.dueDay }
     }
     
     // Early month bills (1-14)
     var earlyMonthBills: [Bill] {
-        bills.filter { $0.dueDay <= 14 }
+        bills.filter { $0.dueDay <= 14 }.sorted { $0.dueDay < $1.dueDay }
     }
     
     // Late month bills (15-31)
     var lateMonthBills: [Bill] {
-        bills.filter { $0.dueDay > 14 }
+        bills.filter { $0.dueDay > 14 }.sorted { $0.dueDay < $1.dueDay }
     }
     
     // Early month totals
-    var earlyMonthTotalUnpaid: Double {
-        earlyMonthBills.filter { !$0.isPaid }.reduce(0) { $0 + $1.amount }
+    var earlyMonthTotal: Double {
+        earlyMonthBills.reduce(0) { $0 + $1.amount }
     }
     
-    var earlyMonthTotalPaid: Double {
+    var earlyMonthPaid: Double {
         earlyMonthBills.filter { $0.isPaid }.reduce(0) { $0 + $1.amount }
     }
     
-    // Late month totals
-    var lateMonthTotalUnpaid: Double {
-        lateMonthBills.filter { !$0.isPaid }.reduce(0) { $0 + $1.amount }
+    var earlyMonthUnpaid: Double {
+        earlyMonthBills.filter { !$0.isPaid }.reduce(0) { $0 + $1.amount }
     }
     
-    var lateMonthTotalPaid: Double {
+    // Late month totals
+    var lateMonthTotal: Double {
+        lateMonthBills.reduce(0) { $0 + $1.amount }
+    }
+    
+    var lateMonthPaid: Double {
         lateMonthBills.filter { $0.isPaid }.reduce(0) { $0 + $1.amount }
     }
     
-    // Grand totals
-    var totalUnpaidAmount: Double {
-        earlyMonthTotalUnpaid + lateMonthTotalUnpaid
+    var lateMonthUnpaid: Double {
+        lateMonthBills.filter { !$0.isPaid }.reduce(0) { $0 + $1.amount }
     }
     
-    var totalPaidAmountThisMonth: Double {
-        earlyMonthTotalPaid + lateMonthTotalPaid
+    // Grand totals
+    var totalAmount: Double {
+        bills.reduce(0) { $0 + $1.amount }
+    }
+    
+    var totalPaid: Double {
+        bills.filter { $0.isPaid }.reduce(0) { $0 + $1.amount }
+    }
+    
+    var totalUnpaid: Double {
+        bills.filter { !$0.isPaid }.reduce(0) { $0 + $1.amount }
+    }
+    
+    func toggleAllPaidStatus(forBills selectedBills: [Bill]) {
+        let allPaid = areAllBillsPaid(bills: selectedBills)
+        for bill in selectedBills {
+            if let index = bills.firstIndex(where: { $0.id == bill.id }) {
+                bills[index].isPaid = !allPaid
+            }
+        }
+        saveBills()
+    }
+    
+    func areAllBillsPaid(bills: [Bill]) -> Bool {
+        !bills.isEmpty && bills.allSatisfy { $0.isPaid }
     }
     
     private func saveBills() {
@@ -132,5 +186,14 @@ class BillStore: ObservableObject {
             bills = decoded
             sortBills()
         }
+    }
+    
+    var allBillsSorted: [Bill] {
+        bills.sorted { $0.dueDay < $1.dueDay }
+    }
+    
+    func toggleSectionDisplay() {
+        showCombinedSections.toggle()
+        objectWillChange.send()
     }
 } 
